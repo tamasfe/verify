@@ -1,0 +1,6 @@
+[workspace]
+
+members = [
+    "verify",
+    "verify-macros"
+]
