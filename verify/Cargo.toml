@@ -9,7 +9,7 @@ repository  = "https://github.com/tamasfe/verify"
 version     = "0.1.0"
 
 [dependencies]
-verify-macros = { version = "=0.1.0", path = "../verify-macros" }
+verify-macros = { version = "=0.1.0" }
 
 serde      = { version = "1.0", optional = true }
 serde_json = { version = "1.0", optional = true }
