@@ -6,10 +6,34 @@ use std::ops::{Add, AddAssign};
 ///
 /// Spans can represent a hierarchy for nested values
 /// with the help of the [AddAssign](core::ops::AddAssign) trait.
-///
-/// This trait is automatically implemented.
 pub trait Span: core::fmt::Debug + Clone + core::ops::AddAssign {}
-impl<T: core::fmt::Debug + Clone + core::ops::AddAssign> Span for T {}
+
+/// Convenience trait for interacting with spans.
+pub trait SpanExt: Sized {
+    /// Combine two Span-like types. It is useful for
+    /// spans wrapped in [Options](Option).
+    fn combine(&mut self, span: Self);
+}
+
+impl<T: Span> SpanExt for T {
+    fn combine(&mut self, span: Self) {
+        *self += span;
+    }
+}
+
+impl<T: Span> SpanExt for Option<T> {
+    fn combine(&mut self, span: Self) {
+        match span {
+            Some(new_span) => match self {
+                Some(s) => *s += new_span,
+                None => *self = Some(new_span),
+            },
+            None => {
+                *self = None;
+            }
+        }
+    }
+}
 
 /// Spanned values can return an optional [Span](Span) about themselves.
 pub trait Spanned {
@@ -40,6 +64,8 @@ type KeysInner = Vec<String>;
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
 #[repr(transparent)]
 pub struct Keys(KeysInner);
+
+impl Span for Keys {}
 
 impl Keys {
     /// Create a new instance with no keys.

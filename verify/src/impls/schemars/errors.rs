@@ -125,6 +125,9 @@ pub enum ErrorValue<S: Span> {
 
     /// Indicates that a required property is missing.
     RequiredProperty { name: String },
+
+    /// Any error that does not originate from the validator.
+    Custom(String),
 }
 
 /// Error that occurs when a value cannot be validated
@@ -148,7 +151,7 @@ impl core::fmt::Display for UnsupportedValue {
 /// A schema must be valid in order to validate anything with it.
 /// This error occurs if that is not the case.
 ///
-/// It is also returned by calling [verify](crate::Verify::verify) on a schema. 
+/// It is also returned by calling [verify](crate::Verify::verify) on a schema.
 #[derive(Debug, Clone, PartialEq)]
 pub enum InvalidSchema {
     /// Indicates a missing local definition.
@@ -315,6 +318,7 @@ impl<S: Span> core::fmt::Display for ErrorValue<S> {
             ErrorValue::RequiredProperty { name } => {
                 write!(f, r#"the required property "{}" is missing"#, name)
             }
+            ErrorValue::Custom(err) => err.fmt(f),
         }
     }
 }
@@ -383,7 +387,11 @@ impl<S: Span> core::fmt::Display for Errors<S> {
 }
 
 impl<S: Span> std::error::Error for Errors<S> {}
-impl<S: Span> crate::Error for Errors<S> {}
+impl<S: Span> crate::Error for Errors<S> {
+    fn custom<T: core::fmt::Display>(error: T) -> Self {
+        Self::one(Error::new(None, None, ErrorValue::Custom(error.to_string())))
+    }
+}
 
 impl<S: Span> AddAssign for Errors<S> {
     fn add_assign(&mut self, rhs: Self) {

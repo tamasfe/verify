@@ -144,7 +144,39 @@ pub use verify_macros::Verify;
 ///
 /// The [AddAssign](core::ops::AddAssign) bound is required in order to support
 /// validators that return multiple errors.
-pub trait Error: Sized + std::error::Error + core::ops::AddAssign {}
+pub trait Error: Sized + std::error::Error + core::ops::AddAssign {
+    /// Values that are being validated can report errors that
+    /// are not related to the validators.
+    fn custom<T: core::fmt::Display>(error: T) -> Self;
+}
+
+/// Convenience trait for interacting with errors.
+pub trait ErrorExt: Sized {
+    /// Combine two error-like types. It is useful for
+    /// spans wrapped in [Options](Option).
+    fn combine(&mut self, span: Self);
+}
+
+impl<T: Error> ErrorExt for T {
+    fn combine(&mut self, span: Self) {
+        *self += span;
+    }
+}
+
+impl<T: Error> ErrorExt for Option<T> {
+    fn combine(&mut self, span: Self) {
+        match span {
+            Some(new_span) => match self {
+                Some(s) => *s += new_span,
+                None => *self = Some(new_span),
+            },
+            None => {
+                *self = None;
+            }
+        }
+    }
+}
+
 
 /// Validate is implemented by values that can be validate themselves
 /// against a given validator.

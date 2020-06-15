@@ -7,7 +7,7 @@ license     = "MIT"
 name        = "verify"
 readme      = "../README.md"
 repository  = "https://github.com/tamasfe/verify"
-version     = "0.1.2"
+version     = "0.2.0"
 
 [dependencies]
 verify-macros = { version = "=0.1.0", path = "../verify-macros" }

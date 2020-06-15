@@ -1,6 +1,9 @@
 //! Implementation of Verify, Verifier and Validator for schemas.
 
-use crate::{span::Span, Validate, ValidateMap, ValidateSeq, Validator, Verifier};
+use crate::{
+    span::{Span, SpanExt},
+    Validate, ValidateMap, ValidateSeq, Validator, Verifier,
+};
 use schemars_crate::{
     schema::{InstanceType, RootSchema, Schema, SchemaObject, SingleOrVec},
     Set,
@@ -289,19 +292,8 @@ impl<'a, S: Span> SchemaValidator<'a, S> {
 
     fn combine_spans(&mut self) {
         if self.combined_span.is_none() {
-            match &self.span {
-                Some(s) => match &self.parent_span {
-                    Some(ps) => {
-                        let mut cs = ps.clone();
-                        cs += s.clone();
-                        self.combined_span = Some(cs);
-                    }
-                    None => self.combined_span = Some(s.clone()),
-                },
-                None => {
-                    self.combined_span = self.span.clone();
-                }
-            }
+            self.combined_span = self.parent_span.clone();
+            self.parent_span.combine(self.span.clone());
         }
     }
 }
@@ -647,11 +639,12 @@ impl<'a, S: Span> ValidateSeq<S> for SchemaValidator<'a, S> {
 
         let mut errors = Errors::new();
 
+        let mut value_span = self.combined_span.clone();
+        value_span.combine(value.span());
+
         if let Some(arr) = &s.array {
             if let Some(c) = self.arr_contains {
-                if c.verify_value_with_span(value, self.combined_span.clone())
-                    .is_ok()
-                {
+                if c.verify_value_with_span(value, value_span.clone()).is_ok() {
                     self.arr_contains = None;
                 }
             }
@@ -660,22 +653,18 @@ impl<'a, S: Span> ValidateSeq<S> for SchemaValidator<'a, S> {
                 match items {
                     SingleOrVec::Single(single_schema) => {
                         if let Err(e) =
-                            single_schema.verify_value_with_span(value, self.combined_span.clone())
+                            single_schema.verify_value_with_span(value, value_span.clone())
                         {
                             errors.0.extend(e.0.into_iter());
                         }
                     }
                     SingleOrVec::Vec(schemas) => {
                         if let Some(s) = schemas.get(self.arr_item_count - 1) {
-                            if let Err(e) =
-                                s.verify_value_with_span(value, self.combined_span.clone())
-                            {
+                            if let Err(e) = s.verify_value_with_span(value, value_span.clone()) {
                                 errors.0.extend(e.0.into_iter());
                             }
                         } else if let Some(s) = &arr.additional_items {
-                            if let Err(e) =
-                                s.verify_value_with_span(value, self.combined_span.clone())
-                            {
+                            if let Err(e) = s.verify_value_with_span(value, value_span.clone()) {
                                 errors.0.extend(e.0.into_iter());
                             }
                         }
@@ -813,6 +802,9 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
         self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
+        let mut key_span = self.combined_span.clone();
+        key_span.combine(key.span());
+
         let key_string = key.to_string();
 
         self.obj_required.remove(&key_string);
@@ -821,7 +813,7 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
 
         if let Some(obj) = &s.object {
             if let Some(name_schema) = &obj.property_names {
-                if let Err(e) = name_schema.verify_value_with_span(key, self.parent_span.clone()) {
+                if let Err(e) = name_schema.verify_value_with_span(key, key_span) {
                     return Err(e);
                 }
             }
@@ -842,9 +834,12 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
         let key = self.obj_last_key.take().expect("no key before value");
 
+        let mut value_span = self.combined_span.clone();
+        value_span.combine(value.span());
+
         if let Some(obj) = &s.object {
             if let Some(prop_schema) = obj.properties.get(&key) {
-                match prop_schema.verify_value_with_span(value, self.combined_span.clone()) {
+                match prop_schema.verify_value_with_span(value, value_span.clone()) {
                     Ok(_) => {
                         return Ok(());
                     }
@@ -867,7 +862,7 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
                 })?;
 
                 if key_re.is_match(&key) {
-                    match v.verify_value_with_span(value, self.combined_span.clone()) {
+                    match v.verify_value_with_span(value, value_span.clone()) {
                         Ok(_) => {
                             return Ok(());
                         }
@@ -879,9 +874,7 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
             }
 
             if let Some(add_prop_schema) = &obj.additional_properties {
-                if let Err(e) =
-                    add_prop_schema.verify_value_with_span(value, self.combined_span.clone())
-                {
+                if let Err(e) = add_prop_schema.verify_value_with_span(value, value_span) {
                     return Err(e);
                 }
             }
