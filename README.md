@@ -14,15 +14,16 @@ Verify is yet another validation library for Rust. Its main concept consists of 
 
 ## Basic Usage
 
-The library itself without features doesn't do much, it only provides definitions and common traits.
+The library itself without features doesn't do much, it only provides trait definitions and common types.
 
 In order to use it you need to write or find a validator, or enable one of the implementation features of the library.
 There is official support only for [Schemars](https://github.com/GREsau/schemars) at the moment.
 
 This very basic example shows how to create a self-validating type with Verify and Schemars:
 
-```rust
+(_Schemars doesn't yet provide a way to add additional rules during derive, but will in the future._)
 
+```rust
 #[derive(Default, Verify, Serialize, JsonSchema)]
 #[verify(schemars, serde)]
 struct ExampleStruct {
@@ -31,6 +32,8 @@ struct ExampleStruct {
 
 fn main() {
     let example = ExampleStruct::default();
+    
+    // This will always return Ok(())
     assert!(example.verify().is_ok());
 }
 
