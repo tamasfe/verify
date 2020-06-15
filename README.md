@@ -41,6 +41,8 @@ fn main() {
 
 There are quite a few things happening behind the scenes. For more details, visit the [documentation](https://docs.rs/verify).
 
+For more examples visit the [examples](verify/examples) directory.
+
 ## Cargo Features
 
 By default only the `smallvec` feature is enabled.
