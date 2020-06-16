@@ -82,7 +82,7 @@ struct SchemaValidator<'a, S: Span> {
 
     // Array tracking
     arr_item_count: usize,
-    // For unique checks
+    // For uniqueness checks
     arr_hashes: HashMap<u64, Option<S>>,
     arr_contains: Option<&'a Schema>,
 
@@ -90,6 +90,7 @@ struct SchemaValidator<'a, S: Span> {
     obj_required: Set<String>,
     obj_prop_count: usize,
     obj_last_key: Option<String>,
+    obj_last_key_span: Option<S>,
 }
 
 impl<'a, S: Span> SchemaValidator<'a, S> {
@@ -107,6 +108,7 @@ impl<'a, S: Span> SchemaValidator<'a, S> {
             obj_required: Set::new(),
             obj_prop_count: 0,
             obj_last_key: None,
+            obj_last_key_span: None,
         }
     }
 
@@ -124,7 +126,7 @@ impl<'a, S: Span> SchemaValidator<'a, S> {
                 Some(local) => match self.defs.get(local) {
                     Some(s) => {
                         return SchemaValidator::new(self.defs, s.into())
-                            .with_parent_span(self.parent_span.clone())
+                            .with_spans(self.parent_span.clone(), value.span())
                             .validate_inner(value)
                     }
                     None => {
@@ -158,7 +160,7 @@ impl<'a, S: Span> SchemaValidator<'a, S> {
 
         if let Err(e) = value.validate(
             SchemaValidator::new(&self.defs, SchemaRef::from(*s))
-                .with_parent_span(self.parent_span.clone()),
+                .with_spans(self.parent_span.clone(), value.span()),
         ) {
             match &mut errors {
                 Some(errs) => {
@@ -385,7 +387,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         self
     }
 
-    fn validate_bool(mut self, v: bool) -> Result<(), Self::Error> {
+    fn validate_bool(self, v: bool) -> Result<(), Self::Error> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Boolean, s, &self.combined_span)?;
@@ -394,7 +396,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         Ok(())
     }
 
-    fn validate_i8(mut self, v: i8) -> Result<(), Self::Error> {
+    fn validate_i8(self, v: i8) -> Result<(), Self::Error> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -404,7 +406,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         Ok(())
     }
 
-    fn validate_i16(mut self, v: i16) -> Result<(), Self::Error> {
+    fn validate_i16(self, v: i16) -> Result<(), Self::Error> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -414,7 +416,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         Ok(())
     }
 
-    fn validate_i32(mut self, v: i32) -> Result<(), Self::Error> {
+    fn validate_i32(self, v: i32) -> Result<(), Self::Error> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -424,7 +426,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         Ok(())
     }
 
-    fn validate_i64(mut self, v: i64) -> Result<(), Self::Error> {
+    fn validate_i64(self, v: i64) -> Result<(), Self::Error> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -434,7 +436,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         Ok(())
     }
 
-    fn validate_i128(mut self, v: i128) -> Result<(), Self::Error> {
+    fn validate_i128(self, v: i128) -> Result<(), Self::Error> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -444,7 +446,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         Ok(())
     }
 
-    fn validate_u8(mut self, v: u8) -> Result<(), Self::Error> {
+    fn validate_u8(self, v: u8) -> Result<(), Self::Error> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -454,7 +456,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         Ok(())
     }
 
-    fn validate_u16(mut self, v: u16) -> Result<(), Self::Error> {
+    fn validate_u16(self, v: u16) -> Result<(), Self::Error> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -464,7 +466,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         Ok(())
     }
 
-    fn validate_u32(mut self, v: u32) -> Result<(), Self::Error> {
+    fn validate_u32(self, v: u32) -> Result<(), Self::Error> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -474,7 +476,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         Ok(())
     }
 
-    fn validate_u64(mut self, v: u64) -> Result<(), Self::Error> {
+    fn validate_u64(self, v: u64) -> Result<(), Self::Error> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -484,7 +486,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         Ok(())
     }
 
-    fn validate_u128(mut self, v: u128) -> Result<(), Self::Error> {
+    fn validate_u128(self, v: u128) -> Result<(), Self::Error> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -494,7 +496,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         Ok(())
     }
 
-    fn validate_f32(mut self, v: f32) -> Result<(), Self::Error> {
+    fn validate_f32(self, v: f32) -> Result<(), Self::Error> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Number, s, &self.combined_span)?;
@@ -504,7 +506,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         Ok(())
     }
 
-    fn validate_f64(mut self, v: f64) -> Result<(), Self::Error> {
+    fn validate_f64(self, v: f64) -> Result<(), Self::Error> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Number, s, &self.combined_span)?;
@@ -518,7 +520,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         self.validate_str(&v.to_string())
     }
 
-    fn validate_str(mut self, v: &str) -> Result<(), Self::Error> {
+    fn validate_str(self, v: &str) -> Result<(), Self::Error> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(String, s, &self.combined_span)?;
@@ -528,7 +530,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         Ok(())
     }
 
-    fn validate_bytes(mut self, _v: &[u8]) -> Result<(), Self::Error> {
+    fn validate_bytes(self, _v: &[u8]) -> Result<(), Self::Error> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(String, s, &self.combined_span)?;
@@ -536,7 +538,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         Ok(())
     }
 
-    fn validate_none(mut self) -> Result<(), Self::Error> {
+    fn validate_none(self) -> Result<(), Self::Error> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Null, s, &self.combined_span)?;
@@ -551,7 +553,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         value.validate(self)
     }
 
-    fn validate_unit(mut self) -> Result<(), Self::Error> {
+    fn validate_unit(self) -> Result<(), Self::Error> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Null, s, &self.combined_span)?;
@@ -559,7 +561,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         Ok(())
     }
 
-    fn validate_unit_struct(mut self, _name: &'static str) -> Result<(), Self::Error> {
+    fn validate_unit_struct(self, _name: &'static str) -> Result<(), Self::Error> {
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Null, s, &self.combined_span)?;
@@ -760,7 +762,7 @@ impl<'a, S: Span> ValidateSeq<S> for SchemaValidator<'a, S> {
         }
     }
 
-    fn end(mut self) -> Result<(), Self::Error> {
+    fn end(self) -> Result<(), Self::Error> {
         if self.tagged_allow {
             return Ok(());
         }
@@ -867,6 +869,7 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
 
         self.obj_required.remove(&key_string);
         self.obj_last_key = Some(key_string);
+        self.obj_last_key_span = key.span();
 
         if let Some(obj) = &s.object {
             if let Some(name_schema) = &obj.property_names {
@@ -892,8 +895,6 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
 
         let s = not_bool_schema!(&self.schema, &self.combined_span);
         let key = self.obj_last_key.take().expect("no key before value");
-
-        let value_span = self.parent_span.combined(value.span());
 
         if let Some(obj) = &s.object {
             if let Some(prop_schema) = obj.properties.get(&key) {
@@ -945,7 +946,7 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
                     if let ErrorValue::Never = &e.0.get(0).unwrap().value {
                         return Err(Errors::one(Error::new(
                             s.metadata.clone(),
-                            value_span.clone(),
+                            self.obj_last_key_span.take(),
                             ErrorValue::UnknownProperty,
                         )));
                     } else {
@@ -958,7 +959,7 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
         Ok(())
     }
 
-    fn end(mut self) -> Result<(), Self::Error> {
+    fn end(self) -> Result<(), Self::Error> {
         if self.tagged_allow {
             return Ok(());
         }

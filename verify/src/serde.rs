@@ -31,7 +31,7 @@ use super::{
     span::{Keys, Span, Spanned as SpannedTrait},
     Validate, ValidateMap, ValidateSeq, Validator,
 };
-use crate::span::SpanExt;
+
 use serde::{ser, ser::SerializeMap, Serialize};
 use std::hash::{Hash, Hasher};
 
@@ -380,7 +380,7 @@ where
         let new_span = self.spans.value(&v);
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         if let Err(e) = validator.validate_bool(v) {
             self.add_error(e)
@@ -392,7 +392,7 @@ where
         let new_span = self.spans.value(&v);
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         if let Err(e) = validator.validate_i8(v) {
             self.add_error(e)
@@ -404,7 +404,7 @@ where
         let new_span = self.spans.value(&v);
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         if let Err(e) = validator.validate_i16(v) {
             self.add_error(e)
@@ -416,7 +416,7 @@ where
         let new_span = self.spans.value(&v);
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         if let Err(e) = validator.validate_i32(v) {
             self.add_error(e)
@@ -428,7 +428,7 @@ where
         let new_span = self.spans.value(&v);
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         if let Err(e) = validator.validate_i64(v) {
             self.add_error(e)
@@ -440,7 +440,7 @@ where
         let new_span = self.spans.value(&v);
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         if let Err(e) = validator.validate_u8(v) {
             self.add_error(e)
@@ -452,7 +452,7 @@ where
         let new_span = self.spans.value(&v);
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         if let Err(e) = validator.validate_u16(v) {
             self.add_error(e)
@@ -464,7 +464,7 @@ where
         let new_span = self.spans.value(&v);
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         if let Err(e) = validator.validate_u32(v) {
             self.add_error(e)
@@ -476,7 +476,7 @@ where
         let new_span = self.spans.value(&v);
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         if let Err(e) = validator.validate_u64(v) {
             self.add_error(e)
@@ -488,7 +488,7 @@ where
         let new_span = self.spans.value(&v);
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         if let Err(e) = validator.validate_f32(v) {
             self.add_error(e)
@@ -500,7 +500,7 @@ where
         let new_span = self.spans.value(&v);
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         if let Err(e) = validator.validate_f64(v) {
             self.add_error(e)
@@ -512,7 +512,7 @@ where
         let new_span = self.spans.value(&v);
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         if let Err(e) = validator.validate_char(v) {
             self.add_error(e)
@@ -524,7 +524,7 @@ where
         let new_span = self.spans.value(&v);
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         if let Err(e) = validator.validate_str(v) {
             self.add_error(e)
@@ -536,7 +536,7 @@ where
         let new_span = self.spans.value(&v);
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         if let Err(e) = validator.validate_bytes(v) {
             self.add_error(e)
@@ -548,7 +548,7 @@ where
         let new_span = self.spans.unit();
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         if let Err(e) = validator.validate_none() {
             self.add_error(e)
@@ -567,7 +567,7 @@ where
         let new_span = self.spans.unit();
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         if let Err(e) = validator.validate_unit() {
             self.add_error(e)
@@ -579,7 +579,7 @@ where
         let new_span = self.spans.value(name);
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         if let Err(e) = validator.validate_unit_struct(name) {
             self.add_error(e)
@@ -596,7 +596,7 @@ where
         let new_span = self.spans.value(variant);
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         if let Err(e) = validator.validate_unit_variant(name, variant_index, variant) {
             self.add_error(e)
@@ -635,7 +635,7 @@ where
         let new_span = self.spans.seq_start();
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         match validator.validate_seq(len) {
             Ok(v) => {
@@ -653,7 +653,7 @@ where
         let new_span = self.spans.seq_start();
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         match validator.validate_seq(Some(len)) {
             Ok(v) => {
@@ -675,7 +675,7 @@ where
         let new_span = self.spans.seq_start();
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         match validator.validate_seq(Some(len)) {
             Ok(v) => {
@@ -735,7 +735,7 @@ where
         let new_span = self.spans.map_start();
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         match validator.validate_map(len) {
             Ok(v) => {
@@ -757,7 +757,7 @@ where
         let new_span = self.spans.map_start();
         self.use_span(new_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         match validator.validate_map(Some(len)) {
             Ok(v) => {
@@ -800,7 +800,7 @@ where
         let inner_map_span = self.spans.map_start();
         self.use_span(inner_map_span);
 
-        let mut validator = self.validator.take().unwrap();
+        let validator = self.validator.take().unwrap();
 
         match validator.validate_map(Some(len)) {
             Ok(v) => {
@@ -831,7 +831,7 @@ where
 
         let val: Hashed<T> = Hashed::new(value);
 
-        let mut validator = self.validator_seq.as_mut().unwrap();
+        let validator = self.validator_seq.as_mut().unwrap();
 
         let item_valid = validator.validate_element(&Spanned {
             spans: self.spans.descend(),
@@ -934,7 +934,7 @@ where
         if self.validator_map.as_ref().unwrap().string_key_required() {
             match key.serialize(KeySerializer) {
                 Ok(k) => {
-                    let mut validator_map = self.validator_map.as_mut().unwrap();
+                    let validator_map = self.validator_map.as_mut().unwrap();
 
                     let key_valid = validator_map.validate_string_key(&Spanned {
                         spans: self.spans.clone(),
@@ -948,7 +948,7 @@ where
                     }
                 }
                 Err(_) => {
-                    let mut validator_map = self.validator_map.as_mut().unwrap();
+                    let validator_map = self.validator_map.as_mut().unwrap();
 
                     let key_valid = validator_map.validate_key(&Spanned {
                         spans: self.spans.clone(),
@@ -963,7 +963,7 @@ where
                 }
             }
         } else {
-            let mut validator_map = self.validator_map.as_mut().unwrap();
+            let validator_map = self.validator_map.as_mut().unwrap();
 
             let key_valid = validator_map.validate_key(&Spanned {
                 spans: self.spans.clone(),
@@ -987,7 +987,7 @@ where
         let new_span = self.spans.value(value);
         let s = self.get_span(new_span);
 
-        let mut validator_map = self.validator_map.as_mut().unwrap();
+        let validator_map = self.validator_map.as_mut().unwrap();
 
         let valid = validator_map.validate_value(&Spanned {
             spans: self.spans.descend(),
