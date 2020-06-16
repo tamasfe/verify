@@ -14,7 +14,7 @@ macro_rules! not_bool_schema {
                     return Ok($ret_val);
                 } else {
                     let mut errors = ErrorsInner::new();
-                    errors.push(Error::new(None, ($span).clone(), ErrorValue::NotAllowed));
+                    errors.push(Error::new(None, ($span).clone(), ErrorValue::Never));
                     return Err(Errors(errors));
                 }
             }
@@ -24,11 +24,11 @@ macro_rules! not_bool_schema {
 }
 
 macro_rules! check_type {
-    ($expected_type:ident, $schema:expr, $span:expr) => {
+    ($actual_type:ident, $schema:expr, $span:expr) => {
         match &$schema.instance_type {
             Some(s) => match s {
                 SingleOrVec::Single(single) => match &**single {
-                    InstanceType::$expected_type => Ok(()),
+                    InstanceType::$actual_type => Ok(()),
                     _ => {
                         let mut errors = ErrorsInner::new();
                         errors.push(Error::new(
@@ -36,13 +36,14 @@ macro_rules! check_type {
                             $span.clone(),
                             ErrorValue::InvalidType {
                                 expected: s.clone(),
+                                actual: InstanceType::$actual_type,
                             },
                         ));
                         Err(Errors(errors))
                     }
                 },
                 SingleOrVec::Vec(vec) => {
-                    if vec.iter().any(|i| *i == InstanceType::$expected_type) {
+                    if vec.iter().any(|i| *i == InstanceType::$actual_type) {
                         Ok(())
                     } else {
                         let mut errors = ErrorsInner::new();
@@ -51,6 +52,7 @@ macro_rules! check_type {
                             $span.clone(),
                             ErrorValue::InvalidType {
                                 expected: s.clone(),
+                                actual: InstanceType::$actual_type,
                             },
                         ));
                         Err(Errors(errors))
@@ -64,13 +66,14 @@ macro_rules! check_type {
                     $span.clone(),
                     ErrorValue::InvalidType {
                         expected: SingleOrVec::Single(Box::new(InstanceType::Object)),
+                        actual: InstanceType::$actual_type,
                     },
                 ));
                 Err(Errors(errors))
             }
         }
     };
-    (Object, $schema:expr, $span:expr) => {
+    ($schema:expr, $span:expr) => {
         match &$schema.instance_type {
             Some(s) => match s {
                 SingleOrVec::Single(single) => match &**single {
@@ -82,6 +85,7 @@ macro_rules! check_type {
                             $span.clone(),
                             ErrorValue::InvalidType {
                                 expected: s.clone(),
+                                actual: InstanceType::Object,
                             },
                         ));
                         Err(Errors(errors))
@@ -97,6 +101,7 @@ macro_rules! check_type {
                             $span.clone(),
                             ErrorValue::InvalidType {
                                 expected: s.clone(),
+                                actual: InstanceType::Object,
                             },
                         ));
                         Err(Errors(errors))

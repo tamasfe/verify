@@ -9,19 +9,28 @@ use std::ops::{Add, AddAssign};
 pub trait Span: core::fmt::Debug + Clone + core::ops::AddAssign {}
 
 /// Convenience trait for interacting with spans.
-pub trait SpanExt: Sized {
+pub trait SpanExt: Sized + Clone {
     /// Combine two Span-like types. It is useful for
     /// spans wrapped in [Options](Option).
     fn combine(&mut self, span: Self);
+
+    /// Clones and combines two Span-like types. It is useful for
+    /// spans wrapped in [Options](Option).
+    fn combined(&self, span: Self) -> Self {
+        let mut new = self.clone();
+        new.combine(span);
+
+        new
+    }
 }
 
-impl<T: Span> SpanExt for T {
+impl<S: Span> SpanExt for S {
     fn combine(&mut self, span: Self) {
         *self += span;
     }
 }
 
-impl<T: Span> SpanExt for Option<T> {
+impl<S: Span> SpanExt for Option<S> {
     fn combine(&mut self, span: Self) {
         match span {
             Some(new_span) => match self {

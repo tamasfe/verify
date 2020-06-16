@@ -6,7 +6,7 @@ use crate::{
 };
 use schemars_crate::{
     schema::{InstanceType, RootSchema, Schema, SchemaObject, SingleOrVec},
-    Set,
+    Map, Set,
 };
 use std::{
     collections::{hash_map::DefaultHasher, HashMap},
@@ -19,42 +19,6 @@ impl<S: Span> Verifier<S> for RootSchema {
     type Error = Errors<S>;
 
     fn verify_value<V: ?Sized + Validate<Span = S>>(&self, value: &V) -> Result<(), Self::Error> {
-        self.schema.verify_value(value)
-    }
-
-    fn verify_value_with_span<V: ?Sized + Validate<Span = S>>(
-        &self,
-        value: &V,
-        span: Option<V::Span>,
-    ) -> Result<(), Self::Error> {
-        self.schema.verify_value_with_span(value, span)
-    }
-}
-
-impl<S: Span> Verifier<S> for Schema {
-    type Error = Errors<S>;
-
-    fn verify_value<V: ?Sized + Validate<Span = S>>(&self, value: &V) -> Result<(), Self::Error> {
-        let r = SchemaRef::from(self);
-        let s = not_bool_schema!(r, &value.span());
-        s.verify_value(value)
-    }
-
-    fn verify_value_with_span<V: ?Sized + Validate<Span = S>>(
-        &self,
-        value: &V,
-        span: Option<V::Span>,
-    ) -> Result<(), Self::Error> {
-        let r = SchemaRef::from(self);
-        let s = not_bool_schema!(r, &value.span());
-        s.verify_value_with_span(value, span)
-    }
-}
-
-impl<S: Span> Verifier<S> for SchemaObject {
-    type Error = Errors<S>;
-
-    fn verify_value<V: ?Sized + Validate<Span = S>>(&self, value: &V) -> Result<(), Self::Error> {
         self.verify_value_with_span(value, None)
     }
 
@@ -63,156 +27,10 @@ impl<S: Span> Verifier<S> for SchemaObject {
         value: &V,
         span: Option<V::Span>,
     ) -> Result<(), Self::Error> {
-        let mut errors = validate_subschemas(self, span.clone(), value).err();
-
-        if let Err(e) = value.validate(
-            SchemaValidator::from_ref(SchemaRef::Object(self))
-                .with_parent_span(span)
-                .with_span(value.span()),
-        ) {
-            match &mut errors {
-                Some(errs) => {
-                    *errs += e;
-                }
-                None => errors = Some(e),
-            }
-        }
-
-        match errors {
-            None => Ok(()),
-            Some(e) => Err(e),
-        }
+        SchemaValidator::new(&self.definitions, (&self.schema).into())
+            .with_parent_span(span)
+            .validate_inner(value)
     }
-}
-
-/// Validate all the allOf anyOf, etc. schemas for a given value.
-fn validate_subschemas<V: ?Sized + Validate>(
-    schema: &SchemaObject,
-    parent_span: Option<V::Span>,
-    value: &V,
-) -> Result<(), Errors<V::Span>> {
-    if let Some(sub) = &schema.subschemas {
-        let mut errors = ErrorsInner::new();
-
-        if let Some(all_of) = &sub.all_of {
-            for s in all_of {
-                if let Err(e) = s.verify_value_with_span(value, parent_span.clone()) {
-                    errors.extend(e.0.into_iter());
-                }
-            }
-        }
-
-        if let Some(any_of) = &sub.any_of {
-            let mut validated = Vec::with_capacity(any_of.len());
-            let mut inner_errors: Vec<Errors<_>> = Vec::with_capacity(any_of.len());
-            for s in any_of {
-                match s.verify_value_with_span(value, parent_span.clone()) {
-                    Ok(_) => match s {
-                        Schema::Object(o) => {
-                            validated.push(o.metadata.clone());
-                        }
-                        _ => {
-                            validated.push(None);
-                        }
-                    },
-                    Err(e) => {
-                        inner_errors.push(e);
-                    }
-                }
-            }
-            if validated.is_empty() {
-                errors.push(Error::new(
-                    schema.metadata.clone(),
-                    value.span(),
-                    ErrorValue::NoneValid {
-                        errors: inner_errors,
-                    },
-                ));
-            } else if validated.len() > 1 {
-                errors.push(Error::new(
-                    schema.metadata.clone(),
-                    value.span(),
-                    ErrorValue::MoreThanOneValid { matched: validated },
-                ));
-            }
-        }
-
-        if let Some(one_of) = &sub.one_of {
-            let mut validated = Vec::with_capacity(one_of.len());
-            let mut inner_errors: Vec<Errors<_>> = Vec::with_capacity(one_of.len());
-            for s in one_of {
-                match s.verify_value_with_span(value, parent_span.clone()) {
-                    Ok(_) => match s {
-                        Schema::Object(o) => {
-                            validated.push(o.metadata.clone());
-                        }
-                        _ => {
-                            validated.push(None);
-                        }
-                    },
-                    Err(e) => {
-                        inner_errors.push(e);
-                    }
-                }
-            }
-            if validated.is_empty() {
-                errors.push(Error::new(
-                    schema.metadata.clone(),
-                    value.span(),
-                    ErrorValue::NoneValid {
-                        errors: inner_errors,
-                    },
-                ));
-            } else if validated.len() > 1 {
-                errors.push(Error::new(
-                    schema.metadata.clone(),
-                    value.span(),
-                    ErrorValue::MoreThanOneValid { matched: validated },
-                ));
-            }
-        }
-
-        if let (Some(sub_if), Some(sub_then)) = (&sub.if_schema, &sub.then_schema) {
-            if sub_if
-                .verify_value_with_span(value, parent_span.clone())
-                .is_ok()
-            {
-                if let Err(e) = sub_then.verify_value_with_span(value, parent_span.clone()) {
-                    errors.extend(e.0.into_iter());
-                }
-            } else if let Some(sub_else) = &sub.else_schema {
-                if let Err(e) = sub_else.verify_value_with_span(value, parent_span.clone()) {
-                    errors.extend(e.0.into_iter());
-                }
-            }
-        }
-
-        if let Some(not) = &sub.not {
-            if not
-                .verify_value_with_span(value, parent_span.clone())
-                .is_ok()
-            {
-                errors.push(Error::new(
-                    schema.metadata.clone(),
-                    value.span(),
-                    ErrorValue::ValidNot {
-                        matched: match &**not {
-                            Schema::Object(o) => o.metadata.clone(),
-                            _ => None,
-                        },
-                    },
-                ));
-            }
-        }
-
-        return if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(Errors(errors))
-        };
-    }
-
-    Ok(())
 }
 
 /// This is technically not needed anymore,
@@ -231,6 +49,12 @@ impl<'s> From<&'s Schema> for SchemaRef<'s> {
     }
 }
 
+impl<'s> From<&'s SchemaObject> for SchemaRef<'s> {
+    fn from(s: &'s SchemaObject) -> Self {
+        SchemaRef::Object(s)
+    }
+}
+
 impl<'s> From<&'s RootSchema> for SchemaRef<'s> {
     fn from(s: &'s RootSchema) -> Self {
         SchemaRef::Object(&s.schema)
@@ -244,6 +68,7 @@ impl<'s> From<&'s RootSchema> for SchemaRef<'s> {
 /// must be used instead, it will validate the value against subschemas.
 struct SchemaValidator<'a, S: Span> {
     schema: SchemaRef<'a>,
+    defs: &'a Map<String, Schema>,
 
     // If a schema was not found for an external tag,
     // everything should be allowed.
@@ -268,9 +93,10 @@ struct SchemaValidator<'a, S: Span> {
 }
 
 impl<'a, S: Span> SchemaValidator<'a, S> {
-    fn from_ref(schema: SchemaRef<'a>) -> Self {
+    fn new(defs: &'a Map<String, Schema>, schema: SchemaRef<'a>) -> Self {
         Self {
             schema,
+            defs,
             parent_span: None,
             span: None,
             combined_span: None,
@@ -284,16 +110,256 @@ impl<'a, S: Span> SchemaValidator<'a, S> {
         }
     }
 
+    fn validate_inner<V: ?Sized + Validate<Span = S>>(
+        &mut self,
+        value: &V,
+    ) -> Result<(), Errors<S>> {
+        let s = not_bool_schema!(&self.schema, &self.combined_span);
+
+        let mut value_span = self.combined_span.clone();
+        value_span.combine(value.span());
+
+        if let Some(r) = &s.reference {
+            match local_definition(r) {
+                Some(local) => match self.defs.get(local) {
+                    Some(s) => {
+                        return SchemaValidator::new(self.defs, s.into())
+                            .with_parent_span(self.parent_span.clone())
+                            .validate_inner(value)
+                    }
+                    None => {
+                        return Err(Errors::one(Error::new(
+                            s.metadata.clone(),
+                            value_span.clone(),
+                            ErrorValue::InvalidSchema(InvalidSchema::MissingDefinition(
+                                local.to_string(),
+                            )),
+                        )));
+                    }
+                },
+                None => {
+                    return Err(Errors::one(Error::new(
+                        s.metadata.clone(),
+                        value_span.clone(),
+                        ErrorValue::InvalidSchema(InvalidSchema::ExternalReference(r.clone())),
+                    )));
+                }
+            }
+        }
+
+        let mut errors = self.validate_subschemas(s, value).err();
+
+        if s.instance_type.is_none() {
+            return match errors {
+                None => Ok(()),
+                Some(e) => Err(e),
+            };
+        }
+
+        if let Err(e) = value.validate(
+            SchemaValidator::new(&self.defs, SchemaRef::from(*s))
+                .with_parent_span(self.parent_span.clone()),
+        ) {
+            match &mut errors {
+                Some(errs) => {
+                    *errs += e;
+                }
+                None => errors = Some(e),
+            }
+        }
+
+        match errors {
+            None => Ok(()),
+            Some(e) => Err(e),
+        }
+    }
+
+    /// Validate all the allOf anyOf, etc. schemas for a given value.
+    fn validate_subschemas<V: ?Sized + Validate<Span = S>>(
+        &self,
+        schema: &SchemaObject,
+        value: &V,
+    ) -> Result<(), Errors<S>> {
+        if let Some(sub) = &schema.subschemas {
+            let mut errors = ErrorsInner::new();
+
+            if let Some(all_of) = &sub.all_of {
+                for s in all_of {
+                    if let Err(e) = SchemaValidator::new(self.defs, s.into())
+                        .with_spans(self.parent_span.clone(), self.span.clone())
+                        .validate_inner(value)
+                    {
+                        errors.extend(e.0.into_iter());
+                    }
+                }
+            }
+
+            if let Some(any_of) = &sub.any_of {
+                let mut validated = Vec::with_capacity(any_of.len());
+                let mut inner_errors: Vec<Errors<_>> = Vec::with_capacity(any_of.len());
+                for s in any_of {
+                    match SchemaValidator::new(self.defs, s.into())
+                        .with_spans(self.parent_span.clone(), self.span.clone())
+                        .validate_inner(value)
+                    {
+                        Ok(_) => match s {
+                            Schema::Object(o) => {
+                                validated.push(o.metadata.clone());
+                            }
+                            _ => {
+                                validated.push(None);
+                            }
+                        },
+                        Err(e) => {
+                            inner_errors.push(e);
+                        }
+                    }
+                }
+                if validated.is_empty() {
+                    errors.push(Error::new(
+                        schema.metadata.clone(),
+                        value.span(),
+                        ErrorValue::NoneValid {
+                            exclusive: false,
+                            schemas: any_of
+                                .iter()
+                                .map(|s| match s {
+                                    Schema::Bool(_) => None,
+                                    Schema::Object(o) => o.metadata.clone(),
+                                })
+                                .collect(),
+                            errors: inner_errors,
+                        },
+                    ));
+                }
+            }
+
+            if let Some(one_of) = &sub.one_of {
+                let mut validated = Vec::with_capacity(one_of.len());
+                let mut inner_errors: Vec<Errors<_>> = Vec::with_capacity(one_of.len());
+                for s in one_of {
+                    match SchemaValidator::new(self.defs, s.into())
+                        .with_spans(self.parent_span.clone(), self.span.clone())
+                        .validate_inner(value)
+                    {
+                        Ok(_) => match s {
+                            Schema::Object(o) => {
+                                validated.push(o.metadata.clone());
+                            }
+                            _ => {
+                                validated.push(None);
+                            }
+                        },
+                        Err(e) => {
+                            inner_errors.push(e);
+                        }
+                    }
+                }
+                if validated.is_empty() {
+                    errors.push(Error::new(
+                        schema.metadata.clone(),
+                        value.span(),
+                        ErrorValue::NoneValid {
+                            exclusive: true,
+                            schemas: one_of
+                                .iter()
+                                .map(|s| match s {
+                                    Schema::Bool(_) => None,
+                                    Schema::Object(o) => o.metadata.clone(),
+                                })
+                                .collect(),
+                            errors: inner_errors,
+                        },
+                    ));
+                } else if validated.len() > 1 {
+                    errors.push(Error::new(
+                        schema.metadata.clone(),
+                        value.span(),
+                        ErrorValue::MoreThanOneValid {
+                            schemas: one_of
+                                .iter()
+                                .map(|s| match s {
+                                    Schema::Bool(_) => None,
+                                    Schema::Object(o) => o.metadata.clone(),
+                                })
+                                .collect(),
+                            matched: validated,
+                        },
+                    ));
+                }
+            }
+
+            if let (Some(sub_if), Some(sub_then)) = (&sub.if_schema, &sub.then_schema) {
+                if SchemaValidator::new(self.defs, (&**sub_if).into())
+                    .with_spans(self.parent_span.clone(), self.span.clone())
+                    .validate_inner(value)
+                    .is_ok()
+                {
+                    if let Err(e) = SchemaValidator::new(self.defs, (&**sub_then).into())
+                        .with_spans(self.parent_span.clone(), self.span.clone())
+                        .validate_inner(value)
+                    {
+                        errors.extend(e.0.into_iter());
+                    }
+                } else if let Some(sub_else) = &sub.else_schema {
+                    if let Err(e) = SchemaValidator::new(self.defs, (&**sub_else).into())
+                        .with_spans(self.parent_span.clone(), self.span.clone())
+                        .validate_inner(value)
+                    {
+                        errors.extend(e.0.into_iter());
+                    }
+                }
+            }
+
+            if let Some(not) = &sub.not {
+                if SchemaValidator::new(self.defs, (&**not).into())
+                    .with_spans(self.parent_span.clone(), self.span.clone())
+                    .validate_inner(value)
+                    .is_ok()
+                {
+                    errors.push(Error::new(
+                        schema.metadata.clone(),
+                        value.span(),
+                        ErrorValue::ValidNot {
+                            matched: match &**not {
+                                Schema::Object(o) => o.metadata.clone(),
+                                _ => None,
+                            },
+                        },
+                    ));
+                }
+            }
+
+            return if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(Errors(errors))
+            };
+        }
+
+        Ok(())
+    }
+
+    fn with_spans(mut self, parent: Option<S>, span: Option<S>) -> Self {
+        self.parent_span = parent;
+        self.span = span;
+
+        self.combine_spans();
+
+        self
+    }
+
     fn with_parent_span(mut self, span: Option<S>) -> Self {
         self.parent_span = span;
+        self.combine_spans();
 
         self
     }
 
     fn combine_spans(&mut self) {
-        if self.combined_span.is_none() {
-            self.combined_span = self.parent_span.clone();
-            self.parent_span.combine(self.span.clone());
+        self.combined_span = self.parent_span.clone();
+        if self.span.is_some() {
+            self.combined_span.combine(self.span.clone());
         }
     }
 }
@@ -307,20 +373,19 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     fn with_span(mut self, span: Option<S>) -> Self {
         match span {
             Some(s) => {
-                self.span = s.into();
+                self.span = Some(s);
             }
             None => {
                 self.parent_span = None;
                 self.span = None;
             }
         }
-        self.combined_span = None;
+        self.combine_spans();
 
         self
     }
 
     fn validate_bool(mut self, v: bool) -> Result<(), Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Boolean, s, &self.combined_span)?;
@@ -330,7 +395,6 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     }
 
     fn validate_i8(mut self, v: i8) -> Result<(), Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -341,7 +405,6 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     }
 
     fn validate_i16(mut self, v: i16) -> Result<(), Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -352,7 +415,6 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     }
 
     fn validate_i32(mut self, v: i32) -> Result<(), Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -363,7 +425,6 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     }
 
     fn validate_i64(mut self, v: i64) -> Result<(), Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -374,7 +435,6 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     }
 
     fn validate_i128(mut self, v: i128) -> Result<(), Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -385,7 +445,6 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     }
 
     fn validate_u8(mut self, v: u8) -> Result<(), Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -396,7 +455,6 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     }
 
     fn validate_u16(mut self, v: u16) -> Result<(), Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -407,7 +465,6 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     }
 
     fn validate_u32(mut self, v: u32) -> Result<(), Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -418,7 +475,6 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     }
 
     fn validate_u64(mut self, v: u64) -> Result<(), Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -429,7 +485,6 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     }
 
     fn validate_u128(mut self, v: u128) -> Result<(), Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Integer, s, &self.combined_span)?;
@@ -440,7 +495,6 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     }
 
     fn validate_f32(mut self, v: f32) -> Result<(), Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Number, s, &self.combined_span)?;
@@ -451,7 +505,6 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     }
 
     fn validate_f64(mut self, v: f64) -> Result<(), Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Number, s, &self.combined_span)?;
@@ -466,7 +519,6 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     }
 
     fn validate_str(mut self, v: &str) -> Result<(), Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(String, s, &self.combined_span)?;
@@ -477,7 +529,6 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     }
 
     fn validate_bytes(mut self, _v: &[u8]) -> Result<(), Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(String, s, &self.combined_span)?;
@@ -486,7 +537,6 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     }
 
     fn validate_none(mut self) -> Result<(), Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Null, s, &self.combined_span)?;
@@ -502,7 +552,6 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     }
 
     fn validate_unit(mut self) -> Result<(), Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Null, s, &self.combined_span)?;
@@ -511,7 +560,6 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     }
 
     fn validate_unit_struct(mut self, _name: &'static str) -> Result<(), Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         check_type!(Null, s, &self.combined_span)?;
@@ -529,7 +577,6 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     }
 
     fn validate_seq(mut self, len: Option<usize>) -> Result<Self::ValidateSeq, Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(self, &self.schema, &self.combined_span);
 
         check_type!(Array, s, &self.combined_span)?;
@@ -542,18 +589,22 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
         if let Some(l) = len {
             self.arr_hashes.reserve(l);
         }
+
+        self.parent_span = self.combined_span.clone();
+
         Ok(self)
     }
 
     fn validate_map(mut self, _len: Option<usize>) -> Result<Self::ValidateMap, Self::Error> {
-        self.combine_spans();
         let s = not_bool_schema!(self, &self.schema, &self.combined_span);
 
-        check_type!(Object, s, &self.combined_span)?;
+        check_type!(s, &self.combined_span)?;
 
         if let Some(obj) = &s.object {
             self.obj_required = obj.required.clone();
         }
+
+        self.parent_span = self.combined_span.clone();
 
         Ok(self)
     }
@@ -562,12 +613,13 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
     where
         V: ?Sized + Validate<Span = S> + ToString,
     {
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
-        check_type!(Object, s, &self.combined_span)?;
+        check_type!(s, &self.combined_span)?;
 
         let key = tag.to_string();
+
+        let tag_span = self.parent_span.combined(tag.span());
 
         // Look for the property that has the name of the tag,
         // and continue validation with that schema.
@@ -581,7 +633,7 @@ impl<'a, S: Span> Validator<S> for SchemaValidator<'a, S> {
                 let key_re = regex::Regex::new(k).map_err(|error| {
                     Errors::one(Error::new(
                         s.metadata.clone(),
-                        tag.span(),
+                        tag_span.clone(),
                         ErrorValue::InvalidSchema(InvalidSchema::InvalidPattern {
                             pattern: k.clone(),
                             error,
@@ -612,14 +664,14 @@ impl<'a, S: Span> ValidateSeq<S> for SchemaValidator<'a, S> {
     fn with_span(&mut self, span: Option<S>) -> &mut Self {
         match span {
             Some(s) => {
-                self.span = s.into();
+                self.span = Some(s);
             }
             None => {
                 self.parent_span = None;
                 self.span = None;
             }
         }
-        self.combined_span = None;
+        self.combine_spans();
 
         self
     }
@@ -634,17 +686,19 @@ impl<'a, S: Span> ValidateSeq<S> for SchemaValidator<'a, S> {
 
         self.arr_item_count += 1;
 
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
         let mut errors = Errors::new();
 
-        let mut value_span = self.combined_span.clone();
-        value_span.combine(value.span());
+        let value_span = self.parent_span.combined(value.span());
 
         if let Some(arr) = &s.array {
             if let Some(c) = self.arr_contains {
-                if c.verify_value_with_span(value, value_span.clone()).is_ok() {
+                if SchemaValidator::new(&self.defs, c.into())
+                    .with_parent_span(self.parent_span.clone())
+                    .validate_inner(value)
+                    .is_ok()
+                {
                     self.arr_contains = None;
                 }
             }
@@ -652,19 +706,26 @@ impl<'a, S: Span> ValidateSeq<S> for SchemaValidator<'a, S> {
             if let Some(items) = &arr.items {
                 match items {
                     SingleOrVec::Single(single_schema) => {
-                        if let Err(e) =
-                            single_schema.verify_value_with_span(value, value_span.clone())
+                        if let Err(e) = SchemaValidator::new(&self.defs, (&**single_schema).into())
+                            .with_parent_span(self.parent_span.clone())
+                            .validate_inner(value)
                         {
                             errors.0.extend(e.0.into_iter());
                         }
                     }
                     SingleOrVec::Vec(schemas) => {
                         if let Some(s) = schemas.get(self.arr_item_count - 1) {
-                            if let Err(e) = s.verify_value_with_span(value, value_span.clone()) {
+                            if let Err(e) = SchemaValidator::new(&self.defs, s.into())
+                                .with_parent_span(self.parent_span.clone())
+                                .validate_inner(value)
+                            {
                                 errors.0.extend(e.0.into_iter());
                             }
                         } else if let Some(s) = &arr.additional_items {
-                            if let Err(e) = s.verify_value_with_span(value, value_span.clone()) {
+                            if let Err(e) = SchemaValidator::new(&self.defs, (&**s).into())
+                                .with_parent_span(self.parent_span.clone())
+                                .validate_inner(value)
+                            {
                                 errors.0.extend(e.0.into_iter());
                             }
                         }
@@ -677,15 +738,15 @@ impl<'a, S: Span> ValidateSeq<S> for SchemaValidator<'a, S> {
                 value.hash(&mut hasher);
                 let h = hasher.finish();
 
-                let existing = self.arr_hashes.insert(h, value.span());
+                let existing = self.arr_hashes.insert(h, value_span.clone());
 
                 if let Some(existing_val) = existing {
                     errors.0.push(Error::new(
                         s.metadata.clone(),
-                        value.span(),
+                        value_span.clone(),
                         ErrorValue::NotUnique {
                             first: existing_val,
-                            duplicate: value.span(),
+                            duplicate: value_span.clone(),
                         },
                     ));
                 }
@@ -704,14 +765,13 @@ impl<'a, S: Span> ValidateSeq<S> for SchemaValidator<'a, S> {
             return Ok(());
         }
 
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
         let mut errors = Errors::new();
 
         if let Some(c) = self.arr_contains {
             errors.0.push(Error::new(
                 s.metadata.clone(),
-                self.span.clone(),
+                self.combined_span.clone(),
                 ErrorValue::MustContain {
                     schema: match c {
                         Schema::Bool(_) => None,
@@ -726,7 +786,7 @@ impl<'a, S: Span> ValidateSeq<S> for SchemaValidator<'a, S> {
                 if self.arr_item_count < min as usize {
                     errors.0.push(Error::new(
                         s.metadata.clone(),
-                        self.span.clone(),
+                        self.combined_span.clone(),
                         ErrorValue::NotEnoughItems { min: min as usize },
                     ));
                 }
@@ -736,7 +796,7 @@ impl<'a, S: Span> ValidateSeq<S> for SchemaValidator<'a, S> {
                 if self.arr_item_count > max as usize {
                     errors.0.push(Error::new(
                         s.metadata.clone(),
-                        self.span.clone(),
+                        self.combined_span.clone(),
                         ErrorValue::TooManyItems { max: max as usize },
                     ));
                 }
@@ -757,14 +817,14 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
     fn with_span(&mut self, span: Option<S>) -> &mut Self {
         match span {
             Some(s) => {
-                self.span = s.into();
+                self.span = Some(s);
             }
             None => {
                 self.parent_span = None;
                 self.span = None;
             }
         }
-        self.combined_span = None;
+        self.combine_spans();
 
         self
     }
@@ -799,21 +859,21 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
 
         self.obj_prop_count += 1;
 
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
 
-        let mut key_span = self.combined_span.clone();
-        key_span.combine(key.span());
+        let key_span = self.parent_span.combined(key.span());
 
         let key_string = key.to_string();
 
         self.obj_required.remove(&key_string);
-
         self.obj_last_key = Some(key_string);
 
         if let Some(obj) = &s.object {
             if let Some(name_schema) = &obj.property_names {
-                if let Err(e) = name_schema.verify_value_with_span(key, key_span) {
+                if let Err(e) = SchemaValidator::new(&self.defs, (&**name_schema).into())
+                    .with_spans(self.parent_span.clone(), key_span)
+                    .validate_inner(key)
+                {
                     return Err(e);
                 }
             }
@@ -830,16 +890,17 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
             return Ok(());
         }
 
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
         let key = self.obj_last_key.take().expect("no key before value");
 
-        let mut value_span = self.combined_span.clone();
-        value_span.combine(value.span());
+        let value_span = self.parent_span.combined(value.span());
 
         if let Some(obj) = &s.object {
             if let Some(prop_schema) = obj.properties.get(&key) {
-                match prop_schema.verify_value_with_span(value, value_span.clone()) {
+                match SchemaValidator::new(&self.defs, prop_schema.into())
+                    .with_parent_span(self.parent_span.clone())
+                    .validate_inner(value)
+                {
                     Ok(_) => {
                         return Ok(());
                     }
@@ -862,7 +923,10 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
                 })?;
 
                 if key_re.is_match(&key) {
-                    match v.verify_value_with_span(value, value_span.clone()) {
+                    match SchemaValidator::new(&self.defs, v.into())
+                        .with_parent_span(self.parent_span.clone())
+                        .validate_inner(value)
+                    {
                         Ok(_) => {
                             return Ok(());
                         }
@@ -874,8 +938,19 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
             }
 
             if let Some(add_prop_schema) = &obj.additional_properties {
-                if let Err(e) = add_prop_schema.verify_value_with_span(value, value_span) {
-                    return Err(e);
+                if let Err(e) = SchemaValidator::new(&self.defs, (&**add_prop_schema).into())
+                    .with_parent_span(self.parent_span.clone())
+                    .validate_inner(value)
+                {
+                    if let ErrorValue::Never = &e.0.get(0).unwrap().value {
+                        return Err(Errors::one(Error::new(
+                            s.metadata.clone(),
+                            value_span.clone(),
+                            ErrorValue::UnknownProperty,
+                        )));
+                    } else {
+                        return Err(e);
+                    }
                 }
             }
         }
@@ -888,7 +963,6 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
             return Ok(());
         }
 
-        self.combine_spans();
         let s = not_bool_schema!(&self.schema, &self.combined_span);
         let mut errors = Errors::new();
 
@@ -897,7 +971,7 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
                 if self.obj_prop_count > max as usize {
                     errors.0.push(Error::new(
                         s.metadata.clone(),
-                        self.span.clone(),
+                        self.combined_span.clone(),
                         ErrorValue::TooManyProperties { max: max as usize },
                     ))
                 }
@@ -907,7 +981,7 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
                 if self.obj_prop_count < min as usize {
                     errors.0.push(Error::new(
                         s.metadata.clone(),
-                        self.span.clone(),
+                        self.combined_span.clone(),
                         ErrorValue::NotEnoughProperties { min: min as usize },
                     ))
                 }
@@ -917,7 +991,7 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
         for p in self.obj_required {
             errors.0.push(Error::new(
                 s.metadata.clone(),
-                self.span.clone(),
+                self.combined_span.clone(),
                 ErrorValue::RequiredProperty { name: p },
             ))
         }
@@ -937,4 +1011,12 @@ impl<'a, S: Span> ValidateMap<S> for SchemaValidator<'a, S> {
             true
         }
     }
+}
+
+fn local_definition(path: &str) -> Option<&str> {
+    if !path.starts_with("#/definitions/") {
+        return None;
+    }
+
+    Some(path.trim_start_matches("#/definitions/"))
 }

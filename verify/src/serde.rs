@@ -1,4 +1,4 @@
-/*! 
+/*!
 
 This module contains tools to make [Serde](https://docs.rs/serde/) Serializable values being able to be validated.
 
@@ -31,43 +31,67 @@ use super::{
     span::{Keys, Span, Spanned as SpannedTrait},
     Validate, ValidateMap, ValidateSeq, Validator,
 };
+use crate::span::SpanExt;
 use serde::{ser, ser::SerializeMap, Serialize};
 use std::hash::{Hash, Hasher};
+
+/// Type returned by [Spans](Spans), it dictates
+/// how the newly returned spans should be used.
+///
+/// It is required because [Spans](Span) support
+/// hierarchy and simply a [None](Option::None) span
+/// will reset the existing hierarchy. Without this
+/// type resetting the hierarchy **and** providing a new
+/// span would not be possible.
+pub enum NewSpan<S: Span> {
+    /// Add the [Span](Span) to the existing hierarchy.
+    /// If it is [None](Option::None), the entire hierarchy is cleared.
+    Add(Option<S>),
+
+    /// Reset the existing hierarchy then applies
+    /// the new span.
+    Reset(Option<S>),
+
+    /// Do nothing, and use the existing hierarchy and span
+    /// if there is any.
+    NoChange,
+}
 
 /// Spans is used to provide spans for values that implement Serde Serialize.
 ///
 /// Span hierarchy is controlled by the validators, only the new spans are required.
-///
-/// A Spans instance is cloned for every value in a map or sequence,
-/// so custom Clone implementation might be necessary.
 pub trait Spans: Clone + Default {
     /// The span type that is associated with each value.
     type Span: Span;
 
     /// Span for a map key.
-    fn key<S: ?Sized + Serialize>(&mut self, key: &S) -> Option<Self::Span>;
+    fn key<S: ?Sized + Serialize>(&mut self, key: &S) -> NewSpan<Self::Span>;
 
     /// Span for a value.
-    fn value<S: ?Sized + Serialize>(&mut self, value: &S) -> Option<Self::Span>;
+    fn value<S: ?Sized + Serialize>(&mut self, value: &S) -> NewSpan<Self::Span>;
 
     /// Same as value but for unit types.
-    fn unit(&mut self) -> Option<Self::Span>;
+    fn unit(&mut self) -> NewSpan<Self::Span>;
 
     /// Span for a map value.
-    fn map_start(&mut self) -> Option<Self::Span>;
+    fn map_start(&mut self) -> NewSpan<Self::Span>;
 
     /// Span for errors before closing a map.
     ///
     /// This doesn't get called for externally tagged variants.
-    fn map_end(&mut self);
+    fn map_end(&mut self) -> NewSpan<Self::Span>;
 
     /// Span for a sequence value.
-    fn seq_start(&mut self) -> Option<Self::Span>;
+    fn seq_start(&mut self) -> NewSpan<Self::Span>;
 
     /// Span for errors before closing a sequence.
     ///
     /// This doesn't get called for externally tagged variants.
-    fn seq_end(&mut self);
+    fn seq_end(&mut self) -> NewSpan<Self::Span>;
+
+    /// This is called when the validator enters a map
+    /// member or a sequence element.
+    fn descend(&self) -> Self;
 }
 
 /// Spanned allows validation of any value that implements Serde Serialize with
@@ -119,72 +143,61 @@ where
 /// Sequence indices are also turned into strings.
 ///
 /// Keys that cannot be represented as strings will be replaced by `???`.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct KeySpans {
-    // We use the same span for a map key and its value
-    last_span: Option<Keys>,
-
     is_seq: bool,
     item_index: usize,
-}
-
-impl Clone for KeySpans {
-    fn clone(&self) -> Self {
-        KeySpans {
-            // Nested values start with the same span.
-            last_span: self.last_span.clone(),
-            is_seq: false,
-            item_index: 0,
-        }
-    }
 }
 
 impl Spans for KeySpans {
     type Span = Keys;
 
-    fn key<S: ?Sized + Serialize>(&mut self, key: &S) -> Option<Self::Span> {
+    fn key<S: ?Sized + Serialize>(&mut self, key: &S) -> NewSpan<Self::Span> {
         let k = match key.serialize(KeySerializer) {
             Ok(s) => s,
             Err(_) => {
-                return Some("???".to_string().into());
+                return NewSpan::Add(Some("???".to_string().into()));
             }
         };
 
-        self.last_span = Some(k.into());
-        self.last_span.clone()
+        NewSpan::Add(Some(k.into()))
     }
 
-    fn value<S: ?Sized + Serialize>(&mut self, _value: &S) -> Option<Self::Span> {
+    fn value<S: ?Sized + Serialize>(&mut self, _value: &S) -> NewSpan<Self::Span> {
         if self.is_seq {
-            self.last_span = Some(self.item_index.to_string().into());
+            let s = NewSpan::Add(Some(self.item_index.to_string().into()));
             self.item_index += 1;
+            return s;
         }
 
-        self.last_span.clone()
+        NewSpan::NoChange
     }
 
-    fn unit(&mut self) -> Option<Self::Span> {
-        if self.is_seq {
-            self.last_span = Some(self.item_index.to_string().into());
-            self.item_index += 1;
-        }
-
-        self.last_span.clone()
+    fn unit(&mut self) -> NewSpan<Self::Span> {
+        self.value(&())
     }
 
-    fn map_start(&mut self) -> Option<Self::Span> {
-        self.last_span.clone()
+    fn map_start(&mut self) -> NewSpan<Self::Span> {
+        NewSpan::NoChange
     }
 
-    fn map_end(&mut self) {}
+    fn map_end(&mut self) -> NewSpan<Self::Span> {
+        NewSpan::Add(None)
+    }
 
-    fn seq_start(&mut self) -> Option<Self::Span> {
+    fn seq_start(&mut self) -> NewSpan<Self::Span> {
         self.is_seq = true;
-        self.last_span.clone()
+        NewSpan::NoChange
     }
 
-    fn seq_end(&mut self) {
+    fn seq_end(&mut self) -> NewSpan<Self::Span> {
         self.is_seq = false;
+        self.item_index = 0;
+        NewSpan::Add(None)
+    }
+
+    fn descend(&self) -> Self {
+        Self::default()
     }
 }
 
@@ -235,6 +248,7 @@ where
 
         let k = SpannedInner {
             spans: self.spans.clone(),
+            span: self.span.clone(),
             validator: Some(validator),
             validator_seq: None,
             validator_map: None,
@@ -254,6 +268,7 @@ where
 
 struct SpannedInner<'k, SP: Spans, V: Validator<SP::Span>> {
     spans: SP,
+    span: Option<SP::Span>,
 
     validator: Option<V>,
     validator_seq: Option<V::ValidateSeq>,
@@ -263,6 +278,56 @@ struct SpannedInner<'k, SP: Spans, V: Validator<SP::Span>> {
 }
 
 impl<'k, SP: Spans, V: Validator<SP::Span>> SpannedInner<'k, SP, V> {
+    fn use_span(&mut self, new_span: NewSpan<SP::Span>) {
+        match new_span {
+            NewSpan::Add(span) => {
+                self.span = span;
+            }
+            NewSpan::Reset(span) => {
+                if let Some(v) = self.validator.take() {
+                    self.validator = Some(v.with_span(None));
+                } else if let Some(v) = self.validator_seq.as_mut() {
+                    v.with_span(None);
+                } else if let Some(v) = self.validator_map.as_mut() {
+                    v.with_span(None);
+                }
+
+                self.span = span;
+            }
+            NewSpan::NoChange => {}
+        }
+
+        if let Some(v) = self.validator.take() {
+            self.validator = Some(v.with_span(self.span.clone()));
+        } else if let Some(v) = self.validator_seq.as_mut() {
+            v.with_span(self.span.clone());
+        } else if let Some(v) = self.validator_map.as_mut() {
+            v.with_span(self.span.clone());
+        }
+    }
+
+    fn get_span(&mut self, new_span: NewSpan<SP::Span>) -> Option<SP::Span> {
+        match new_span {
+            NewSpan::Add(span) => {
+                span.clone()
+            }
+            NewSpan::Reset(span) => {
+                if let Some(v) = self.validator.take() {
+                    self.validator = Some(v.with_span(None));
+                } else if let Some(v) = self.validator_seq.as_mut() {
+                    v.with_span(None);
+                } else if let Some(v) = self.validator_map.as_mut() {
+                    v.with_span(None);
+                }
+
+                span.clone()
+            }
+            NewSpan::NoChange => {
+                self.span.clone()
+            }
+        }
+    }
+
     fn add_error(&mut self, e: V::Error) {
         match &mut self.error {
             Some(err) => {
@@ -312,195 +377,180 @@ where
     type SerializeStructVariant = Self;
 
     fn serialize_bool(mut self, v: bool) -> Result<Self::Ok, Self::Error> {
-        if let Err(e) = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.value(&v))
-            .validate_bool(v)
-        {
+        let new_span = self.spans.value(&v);
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        if let Err(e) = validator.validate_bool(v) {
             self.add_error(e)
         }
         Ok(())
     }
 
     fn serialize_i8(mut self, v: i8) -> Result<Self::Ok, Self::Error> {
-        if let Err(e) = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.value(&v))
-            .validate_i8(v)
-        {
+        let new_span = self.spans.value(&v);
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        if let Err(e) = validator.validate_i8(v) {
             self.add_error(e)
         }
         Ok(())
     }
 
     fn serialize_i16(mut self, v: i16) -> Result<Self::Ok, Self::Error> {
-        if let Err(e) = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.value(&v))
-            .validate_i16(v)
-        {
+        let new_span = self.spans.value(&v);
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        if let Err(e) = validator.validate_i16(v) {
             self.add_error(e)
         }
         Ok(())
     }
 
     fn serialize_i32(mut self, v: i32) -> Result<Self::Ok, Self::Error> {
-        if let Err(e) = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.value(&v))
-            .validate_i32(v)
-        {
+        let new_span = self.spans.value(&v);
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        if let Err(e) = validator.validate_i32(v) {
             self.add_error(e)
         }
         Ok(())
     }
 
     fn serialize_i64(mut self, v: i64) -> Result<Self::Ok, Self::Error> {
-        if let Err(e) = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.value(&v))
-            .validate_i64(v)
-        {
+        let new_span = self.spans.value(&v);
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        if let Err(e) = validator.validate_i64(v) {
             self.add_error(e)
         }
         Ok(())
     }
 
     fn serialize_u8(mut self, v: u8) -> Result<Self::Ok, Self::Error> {
-        if let Err(e) = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.value(&v))
-            .validate_u8(v)
-        {
+        let new_span = self.spans.value(&v);
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        if let Err(e) = validator.validate_u8(v) {
             self.add_error(e)
         }
         Ok(())
     }
 
     fn serialize_u16(mut self, v: u16) -> Result<Self::Ok, Self::Error> {
-        if let Err(e) = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.value(&v))
-            .validate_u16(v)
-        {
+        let new_span = self.spans.value(&v);
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        if let Err(e) = validator.validate_u16(v) {
             self.add_error(e)
         }
         Ok(())
     }
 
     fn serialize_u32(mut self, v: u32) -> Result<Self::Ok, Self::Error> {
-        if let Err(e) = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.value(&v))
-            .validate_u32(v)
-        {
+        let new_span = self.spans.value(&v);
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        if let Err(e) = validator.validate_u32(v) {
             self.add_error(e)
         }
         Ok(())
     }
 
     fn serialize_u64(mut self, v: u64) -> Result<Self::Ok, Self::Error> {
-        if let Err(e) = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.value(&v))
-            .validate_u64(v)
-        {
+        let new_span = self.spans.value(&v);
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        if let Err(e) = validator.validate_u64(v) {
             self.add_error(e)
         }
         Ok(())
     }
 
     fn serialize_f32(mut self, v: f32) -> Result<Self::Ok, Self::Error> {
-        if let Err(e) = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.value(&v))
-            .validate_f32(v)
-        {
+        let new_span = self.spans.value(&v);
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        if let Err(e) = validator.validate_f32(v) {
             self.add_error(e)
         }
         Ok(())
     }
 
     fn serialize_f64(mut self, v: f64) -> Result<Self::Ok, Self::Error> {
-        if let Err(e) = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.value(&v))
-            .validate_f64(v)
-        {
+        let new_span = self.spans.value(&v);
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        if let Err(e) = validator.validate_f64(v) {
             self.add_error(e)
         }
         Ok(())
     }
 
     fn serialize_char(mut self, v: char) -> Result<Self::Ok, Self::Error> {
-        if let Err(e) = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.value(&v))
-            .validate_char(v)
-        {
+        let new_span = self.spans.value(&v);
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        if let Err(e) = validator.validate_char(v) {
             self.add_error(e)
         }
         Ok(())
     }
 
     fn serialize_str(mut self, v: &str) -> Result<Self::Ok, Self::Error> {
-        if let Err(e) = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.value(&v))
-            .validate_str(v)
-        {
+        let new_span = self.spans.value(&v);
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        if let Err(e) = validator.validate_str(v) {
             self.add_error(e)
         }
         Ok(())
     }
 
     fn serialize_bytes(mut self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
-        if let Err(e) = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.value(&v))
-            .validate_bytes(v)
-        {
+        let new_span = self.spans.value(&v);
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        if let Err(e) = validator.validate_bytes(v) {
             self.add_error(e)
         }
         Ok(())
     }
 
     fn serialize_none(mut self) -> Result<Self::Ok, Self::Error> {
-        if let Err(e) = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.unit())
-            .validate_none()
-        {
+        let new_span = self.spans.unit();
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        if let Err(e) = validator.validate_none() {
             self.add_error(e)
         }
         Ok(())
@@ -514,26 +564,24 @@ where
     }
 
     fn serialize_unit(mut self) -> Result<Self::Ok, Self::Error> {
-        if let Err(e) = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.unit())
-            .validate_unit()
-        {
+        let new_span = self.spans.unit();
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        if let Err(e) = validator.validate_unit() {
             self.add_error(e)
         }
         Ok(())
     }
 
     fn serialize_unit_struct(mut self, name: &'static str) -> Result<Self::Ok, Self::Error> {
-        if let Err(e) = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.value(name))
-            .validate_unit_struct(name)
-        {
+        let new_span = self.spans.value(name);
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        if let Err(e) = validator.validate_unit_struct(name) {
             self.add_error(e)
         }
         Ok(())
@@ -545,13 +593,12 @@ where
         variant_index: u32,
         variant: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
-        if let Err(e) = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.value(variant))
-            .validate_unit_variant(name, variant_index, variant)
-        {
+        let new_span = self.spans.value(variant);
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        if let Err(e) = validator.validate_unit_variant(name, variant_index, variant) {
             self.add_error(e)
         }
         Ok(())
@@ -585,13 +632,12 @@ where
     }
 
     fn serialize_seq(mut self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
-        match self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.seq_start())
-            .validate_seq(len)
-        {
+        let new_span = self.spans.seq_start();
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        match validator.validate_seq(len) {
             Ok(v) => {
                 self.validator_seq = Some(v);
                 Ok(self)
@@ -604,13 +650,12 @@ where
     }
 
     fn serialize_tuple(mut self, len: usize) -> Result<Self::SerializeTuple, Self::Error> {
-        match self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.seq_start())
-            .validate_seq(Some(len))
-        {
+        let new_span = self.spans.seq_start();
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        match validator.validate_seq(Some(len)) {
             Ok(v) => {
                 self.validator_seq = Some(v);
                 Ok(self)
@@ -627,13 +672,12 @@ where
         _name: &'static str,
         len: usize,
     ) -> Result<Self::SerializeTupleStruct, Self::Error> {
-        match self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.seq_start())
-            .validate_seq(Some(len))
-        {
+        let new_span = self.spans.seq_start();
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        match validator.validate_seq(Some(len)) {
             Ok(v) => {
                 self.validator_seq = Some(v);
                 Ok(self)
@@ -652,29 +696,30 @@ where
         variant: &'static str,
         len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
-        self.spans.map_start();
+        let new_span = self.spans.map_start();
+        self.use_span(new_span);
 
-        let mut validator = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.key(variant));
+        let mut validator = self.validator.take().unwrap();
+
+        let new_key_span = self.spans.key(variant);
+        self.use_span(new_key_span);
 
         if let Err(e) = validator.validate_tag(&Spanned {
             spans: self.spans.clone(),
-            span: self.spans.key(variant),
+            span: self.span.clone(),
             value: variant,
         }) {
             self.add_error(e);
             return Err(SerdeError);
         }
 
-        self.spans = self.spans.clone();
+        // As per spec the inner seq is a level deeper.
+        self.spans = self.spans.descend();
 
-        match validator
-            .with_span(self.spans.seq_start())
-            .validate_seq(Some(len))
-        {
+        let new_seq_span = self.spans.seq_start();
+        self.use_span(new_seq_span);
+
+        match validator.validate_seq(Some(len)) {
             Ok(v) => {
                 self.validator_seq = Some(v);
                 Ok(self)
@@ -687,13 +732,12 @@ where
     }
 
     fn serialize_map(mut self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
-        match self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.map_start())
-            .validate_map(len)
-        {
+        let new_span = self.spans.map_start();
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        match validator.validate_map(len) {
             Ok(v) => {
                 self.validator_map = Some(v);
                 Ok(self)
@@ -710,13 +754,12 @@ where
         _name: &'static str,
         len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
-        match self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.map_start())
-            .validate_map(Some(len))
-        {
+        let new_span = self.spans.map_start();
+        self.use_span(new_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        match validator.validate_map(Some(len)) {
             Ok(v) => {
                 self.validator_map = Some(v);
                 Ok(self)
@@ -735,29 +778,31 @@ where
         variant: &'static str,
         len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
-        self.spans.map_start();
+        let new_span = self.spans.map_start();
+        self.use_span(new_span);
 
-        let mut validator = self
-            .validator
-            .take()
-            .unwrap()
-            .with_span(self.spans.key(variant));
+        let mut validator = self.validator.take().unwrap();
+
+        let new_key_span = self.spans.key(variant);
+        self.use_span(new_key_span);
 
         if let Err(e) = validator.validate_tag(&Spanned {
             spans: self.spans.clone(),
-            span: self.spans.key(variant),
+            span: self.span.clone(),
             value: variant,
         }) {
             self.add_error(e);
             return Err(SerdeError);
         }
 
-        self.spans = self.spans.clone();
+        self.spans = self.spans.descend();
 
-        match validator
-            .with_span(self.spans.map_start())
-            .validate_map(Some(len))
-        {
+        let inner_map_span = self.spans.map_start();
+        self.use_span(inner_map_span);
+
+        let mut validator = self.validator.take().unwrap();
+
+        match validator.validate_map(Some(len)) {
             Ok(v) => {
                 self.validator_map = Some(v);
                 Ok(self)
@@ -781,13 +826,16 @@ where
     where
         T: Serialize,
     {
+        let new_span = self.spans.value(&value);
+        let s = self.get_span(new_span);
+
         let val: Hashed<T> = Hashed::new(value);
 
-        let validator = self.validator_seq.as_mut().unwrap();
+        let mut validator = self.validator_seq.as_mut().unwrap();
 
         let item_valid = validator.validate_element(&Spanned {
-            span: self.spans.value(value),
-            spans: self.spans.clone(),
+            spans: self.spans.descend(),
+            span: s,
             value: &val,
         });
 
@@ -799,8 +847,10 @@ where
     }
 
     fn end(mut self) -> Result<Self::Ok, Self::Error> {
+        let new_span = self.spans.seq_end();
+        self.use_span(new_span);
+
         let validator = self.validator_seq.take().unwrap();
-        self.spans.seq_end();
 
         if let Err(e) = validator.end() {
             self.add_error(e);
@@ -878,44 +928,52 @@ where
     where
         T: Serialize,
     {
+        let new_span = self.spans.key(key);
+        self.use_span(new_span);
+
         if self.validator_map.as_ref().unwrap().string_key_required() {
             match key.serialize(KeySerializer) {
                 Ok(k) => {
-                    let key_valid =
-                        self.validator_map
-                            .as_mut()
-                            .unwrap()
-                            .validate_string_key(&Spanned {
-                                spans: self.spans.clone(),
-                                span: self.spans.key(key),
-                                value: &k,
-                            });
+                    let mut validator_map = self.validator_map.as_mut().unwrap();
+
+                    let key_valid = validator_map.validate_string_key(&Spanned {
+                        spans: self.spans.clone(),
+                        span: self.span.clone(),
+                        value: &k,
+                    });
 
                     if let Err(e) = key_valid {
                         self.add_error(e);
+                        return Err(SerdeError);
                     }
                 }
                 Err(_) => {
-                    let key_valid = self.validator_map.as_mut().unwrap().validate_key(&Spanned {
+                    let mut validator_map = self.validator_map.as_mut().unwrap();
+
+                    let key_valid = validator_map.validate_key(&Spanned {
                         spans: self.spans.clone(),
-                        span: self.spans.key(key),
+                        span: self.span.clone(),
                         value: key,
                     });
 
                     if let Err(e) = key_valid {
                         self.add_error(e);
+                        return Err(SerdeError);
                     }
                 }
             }
         } else {
-            let key_valid = self.validator_map.as_mut().unwrap().validate_key(&Spanned {
+            let mut validator_map = self.validator_map.as_mut().unwrap();
+
+            let key_valid = validator_map.validate_key(&Spanned {
                 spans: self.spans.clone(),
-                span: self.spans.key(key),
+                span: self.span.clone(),
                 value: key,
             });
 
             if let Err(e) = key_valid {
                 self.add_error(e);
+                return Err(SerdeError);
             }
         }
 
@@ -926,15 +984,16 @@ where
     where
         T: Serialize,
     {
-        let valid = self
-            .validator_map
-            .as_mut()
-            .unwrap()
-            .validate_value(&Spanned {
-                spans: self.spans.clone(),
-                span: self.spans.value(value),
-                value,
-            });
+        let new_span = self.spans.value(value);
+        let s = self.get_span(new_span);
+
+        let mut validator_map = self.validator_map.as_mut().unwrap();
+
+        let valid = validator_map.validate_value(&Spanned {
+            spans: self.spans.descend(),
+            span: s,
+            value,
+        });
 
         if let Err(e) = valid {
             self.add_error(e);
@@ -944,8 +1003,10 @@ where
     }
 
     fn end(mut self) -> Result<Self::Ok, Self::Error> {
+        let new_span = self.spans.map_end();
+        self.use_span(new_span);
+
         let validator = self.validator_map.take().unwrap();
-        self.spans.map_end();
 
         if let Err(e) = validator.end() {
             self.add_error(e);

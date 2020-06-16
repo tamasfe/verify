@@ -30,12 +30,12 @@ impl<S: Span> core::fmt::Display for Error<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut start_paren = false;
 
-        if let Some(span) = &self.span {
-            write!(f, "({:?}", span)?;
-            start_paren = true;
-        }
-
         if f.alternate() {
+            if let Some(span) = &self.span {
+                write!(f, "({:?}", span)?;
+                start_paren = true;
+            }
+
             if let Some(meta) = &self.meta {
                 if let Some(title) = &meta.title {
                     if start_paren {
@@ -43,6 +43,7 @@ impl<S: Span> core::fmt::Display for Error<S> {
                     } else {
                         write!(f, r#"(schema: "{}""#, title)?;
                     }
+                    start_paren = true;
                 }
             }
         }
@@ -60,7 +61,10 @@ impl<S: Span> core::fmt::Display for Error<S> {
 // TODO maybe prefix or group them by type?
 pub enum ErrorValue<S: Span> {
     /// Indicates that the schema will never match any value.
-    NotAllowed,
+    Never,
+
+    /// Indicates that the schema denies unknown properties.
+    UnknownProperty,
 
     /// Indicates that the schema itself is invalid.
     InvalidSchema(InvalidSchema),
@@ -70,7 +74,10 @@ pub enum ErrorValue<S: Span> {
     UnsupportedValue(UnsupportedValue),
 
     /// Indicates invalid type.
-    InvalidType { expected: SingleOrVec<InstanceType> },
+    InvalidType {
+        expected: SingleOrVec<InstanceType>,
+        actual: InstanceType,
+    },
 
     /// Indicates invalid enum value.
     InvalidEnumValue { expected: Vec<serde_json::Value> },
@@ -94,10 +101,16 @@ pub enum ErrorValue<S: Span> {
     TooShort { min_length: u32 },
 
     /// Indicates that none of the subschemas matched.
-    NoneValid { errors: Vec<Errors<S>> },
+    ///
+    /// Exclusive indicates that exactly one of them must have matched.
+    NoneValid {
+        exclusive: bool,
+        schemas: Vec<Option<Box<Metadata>>>,
+        errors: Vec<Errors<S>>,
+    },
 
     /// Indicates that more than one of the subschemas matched.
-    MoreThanOneValid { matched: Vec<Option<Box<Metadata>>> },
+    MoreThanOneValid { schemas: Vec<Option<Box<Metadata>>>, matched: Vec<Option<Box<Metadata>>> },
 
     /// Indicates that a not schema matched.
     ValidNot { matched: Option<Box<Metadata>> },
@@ -186,12 +199,13 @@ impl core::fmt::Display for InvalidSchema {
 impl<S: Span> core::fmt::Display for ErrorValue<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ErrorValue::NotAllowed => write!(f, "value is not allowed here"),
+            ErrorValue::Never => write!(f, "no values allowed"),
+            ErrorValue::UnknownProperty => write!(f, "unknown property"),
             ErrorValue::InvalidSchema(err) => write!(f, "invalid schema: {}", err),
             ErrorValue::UnsupportedValue(err) => write!(f, "unsupported value: {}", err),
-            ErrorValue::InvalidType { expected } => write!(
+            ErrorValue::InvalidType { expected, actual } => write!(
                 f,
-                "invalid type, expected {}",
+                r#"invalid type, expected {}, not "{:?}""#,
                 match expected {
                     SingleOrVec::Single(s) => {
                         format!(r#""{:?}""#, s)
@@ -209,7 +223,8 @@ impl<S: Span> core::fmt::Display for ErrorValue<S> {
 
                         s
                     }
-                }
+                },
+                actual
             ),
             ErrorValue::InvalidEnumValue { expected } => {
                 let enum_vals: Vec<String> = expected.iter().map(|v| v.to_string()).collect();
@@ -249,7 +264,11 @@ impl<S: Span> core::fmt::Display for ErrorValue<S> {
                 r#"the string must must be at least {} characters long"#,
                 min_length
             ),
-            ErrorValue::NoneValid { errors } => {
+            ErrorValue::NoneValid {
+                exclusive: _,
+                schemas: _,
+                errors,
+            } => {
                 writeln!(f, r#"no subschema matched the value:"#)?;
 
                 for (i, e) in errors.iter().enumerate() {
@@ -262,7 +281,7 @@ impl<S: Span> core::fmt::Display for ErrorValue<S> {
 
                 Ok(())
             }
-            ErrorValue::MoreThanOneValid { matched } => writeln!(
+            ErrorValue::MoreThanOneValid { schemas: _, matched } => writeln!(
                 f,
                 r#"expected exactly one schema to match, but {} schemas matched"#,
                 matched.len()
@@ -276,16 +295,8 @@ impl<S: Span> core::fmt::Display for ErrorValue<S> {
 
                 writeln!(f, r#"the value is disallowed by a "not" schema"#)
             }
-            ErrorValue::NotUnique { first, duplicate } => {
-                if let (Some(first), Some(dup)) = (first, duplicate) {
-                    writeln!(
-                        f,
-                        r#"all items in the array must be unique, but "{:?}" and "{:?}" are the same"#,
-                        first, dup
-                    )
-                } else {
-                    writeln!(f, r#"all items in the array must be unique"#)
-                }
+            ErrorValue::NotUnique { first: _, duplicate: _ } => {
+                writeln!(f, r#"all items in the array must be unique"#)
             }
             ErrorValue::MustContain { schema } => {
                 if let Some(meta) = schema {
@@ -389,7 +400,11 @@ impl<S: Span> core::fmt::Display for Errors<S> {
 impl<S: Span> std::error::Error for Errors<S> {}
 impl<S: Span> crate::Error for Errors<S> {
     fn custom<T: core::fmt::Display>(error: T) -> Self {
-        Self::one(Error::new(None, None, ErrorValue::Custom(error.to_string())))
+        Self::one(Error::new(
+            None,
+            None,
+            ErrorValue::Custom(error.to_string()),
+        ))
     }
 }
 
