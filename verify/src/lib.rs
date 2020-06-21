@@ -1,4 +1,4 @@
-#![feature(doc_cfg)]
+#![cfg_attr(feature = "docs", feature(doc_cfg))]
 
 /*!
 
@@ -36,7 +36,7 @@ This very basic example shows how to create a self-validating type with Verify a
 ```edition2018
 # use schemars_crate::{self as schemars, JsonSchema};
 # use serde::Serialize;
-# use crate::Verify;
+# use verify::Verify;
 #[derive(Default, Verify, Serialize, JsonSchema)]
 #[verify(schemars, serde)]
 struct ExampleStruct {
