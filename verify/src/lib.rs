@@ -52,7 +52,7 @@ assert!(example.verify().is_ok());
 pub mod span;
 
 #[cfg(feature = "serde")]
-#[doc(cfg(feature = "serde"))]
+#[cfg_attr(feature = "docs", doc(cfg(feature = "serde")))]
 pub mod serde;
 
 // Optional implementations for various crates.
@@ -176,7 +176,6 @@ impl<T: Error> ErrorExt for Option<T> {
         }
     }
 }
-
 
 /// Validate is implemented by values that can be validate themselves
 /// against a given validator.
