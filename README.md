@@ -1,3 +1,11 @@
+# Status
+
+I don't have time to fully finish and maintain this library, and JSON schema validation in its current form is very limited and extremely inefficient.
+
+**I advise everyone not to use it if possible.**
+
+That being said, if anyone would like to continue it, I'll gladly grant maintainer access or even transfer ownership. I'm also open to giving up the name on crates.io if anyone wants it.
+
 - [Verify](#verify)
   - [Basic Usage](#basic-usage)
   - [Cargo Features](#cargo-features)
